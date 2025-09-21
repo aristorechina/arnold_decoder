@@ -2,9 +2,9 @@
 
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
 
-一个用于暴力破解**猫变换（Arnold's Cat Map）**加密图像的命令行工具。
+一个用于暴力破解 **猫变换（Arnold's Cat Map）** 加密图像的命令行工具。
 
-当你拿到一张被阿诺德变换打乱的图片，但不知道加密时使用的**变换次数(t)**、**参数a**和**参数b**时，本工具可以帮助你快速找回原图。
+当你拿到一张被猫变换打乱的图片，但不知道加密时使用的**变换次数(t)**、**参数a**和**参数b**时，本工具可以帮助你快速找回原图。
 
 ![1](./images/1.png)
 

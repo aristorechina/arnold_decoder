@@ -88,6 +88,92 @@ fn get_user_range(prompt: &str) -> Result<std::ops::Range<i64>> {
     }
 }
 
+// 计算图像的平滑度得分，得分越低表示图像相邻像素颜色差异越小，图像越平滑，越可能是正确结果
+fn calculate_smoothness_score(image: &RgbImage) -> f64 {
+    let (width, height) = image.dimensions();
+    if width < 2 || height < 2 {
+        return f64::MAX;
+    }
+
+    let mut total_diff: u64 = 0;
+    
+    // 遍历几乎所有像素，计算其与右侧和下方像素的差异
+    for y in 0..height - 1 {
+        for x in 0..width - 1 {
+            let p1 = image.get_pixel(x, y);
+            let p2 = image.get_pixel(x + 1, y); // 右侧像素
+            let p3 = image.get_pixel(x, y + 1); // 下方像素
+
+            // 计算RGB通道的绝对差值之和
+            let diff_h = (p1[0] as i16 - p2[0] as i16).abs() as u32 +
+                         (p1[1] as i16 - p2[1] as i16).abs() as u32 +
+                         (p1[2] as i16 - p2[2] as i16).abs() as u32;
+
+            let diff_v = (p1[0] as i16 - p3[0] as i16).abs() as u32 +
+                         (p1[1] as i16 - p3[1] as i16).abs() as u32 +
+                         (p1[2] as i16 - p3[2] as i16).abs() as u32;
+            
+            total_diff += (diff_h + diff_v) as u64;
+        }
+    }
+
+    // 将总差异标准化，避免图像尺寸影响得分
+    let num_comparisons = (width - 1) * (height - 1) * 2;
+    if num_comparisons == 0 {
+        return f64::MAX;
+    }
+    total_diff as f64 / num_comparisons as f64
+}
+
+// 分析输出目录中的所有图像，并根据平滑度得分排序，列出最可能的结果
+fn analyze_results(output_dir: &Path) -> Result<()> {
+    let entries = fs::read_dir(output_dir)
+        .with_context(|| format!("❌ 无法读取分析目录: {:?}", output_dir))?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("png"))
+        .collect::<Vec<_>>();
+
+    if entries.is_empty() {
+        println!("🤷‍♀️ 在输出目录中未找到任何 .png 文件进行分析");
+        return Ok(());
+    }
+
+    let bar_style = ProgressStyle::default_bar()
+        .template("{spinner:.cyan} [{elapsed_precise}] [{bar:40.yellow/red}] {pos}/{len} ({percent}%)  分析中: {msg}")
+        .unwrap()
+        .progress_chars("=> ");
+    let bar = ProgressBar::new(entries.len() as u64).with_style(bar_style);
+
+    let mut scored_images: Vec<(PathBuf, f64)> = entries
+        .par_iter()
+        .progress_with(bar)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if let Ok(image) = image::open(&path) {
+                let score = calculate_smoothness_score(&image.to_rgb8());
+                Some((path, score))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // 根据平滑度进行升序排序，得分越低越好
+    scored_images.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    
+    println!("\n🔍 分析完成，以下是可能性最高的 5 个结果 (得分越低越可能是正确结果):");
+    println!("---------------------------------------------------------------------------------");
+    
+    for (path, score) in scored_images.iter().take(5) {
+        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+            println!("   - 📄 文件: {:<25} | 📉 得分: {:.2}", filename, score);
+        }
+    }
+    println!("---------------------------------------------------------------------------------");
+    
+    Ok(())
+}
+
 fn main() -> Result<()> {
     println!(r"");
     println!(r"================================================================================================================");
@@ -182,6 +268,11 @@ fn main() -> Result<()> {
     println!("\n⏱️ 用时: {:.2} 秒", duration.as_secs_f64());
 
     println!("🎉 处理完成");
+    
+    if let Err(e) = analyze_results(&output_dir) {
+        eprintln!("❌ 分析过程中发生错误: {:?}", e);
+    }
+
     pause_before_exit();
     Ok(())
 }
